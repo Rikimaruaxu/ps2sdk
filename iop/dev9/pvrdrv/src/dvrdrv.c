@@ -44,8 +44,8 @@ typedef struct __attribute__((aligned(4))) struct_itr_sema_
 
 typedef struct struct_dvrdrv_
 {
-    int mainthread_id;
-    u16 dvr_ready;
+        int arg1;
+        u16 arg2;
 } struct_dvrdrv;
 
 int module_start();
@@ -108,15 +108,11 @@ int _start(int argc, char *argv[])
 
 int module_start()
 {
-    int result = MODULE_NO_RESIDENT_END;
+    int result = 1;
 
     if (DvrdrvInit() != -1) {
         if (RegisterLibraryEntries(&_exp_pvrdrv) == 0) {
-#if 0
-            result = MODULE_REMOVABLE_END;
-#else
-            result = MODULE_RESIDENT_END;
-#endif
+            result = 2;
         }
     }
     return result;
@@ -129,13 +125,9 @@ int module_stop()
 
     ReleaseLibraryEntries(&_exp_pvrdrv);
     v0 = DvrdrvEnd() == 0;
-#if 0
-    result = MODULE_NO_RESIDENT_END;
-#else
-    result = MODULE_RESIDENT_END;
-#endif
+    result = 1;
     if (!v0)
-        result = MODULE_REMOVABLE_END;
+        result = 2;
     return result;
 }
 
@@ -146,7 +138,6 @@ int DvrdrvInit()
     iop_sema_t v12;
     iop_sema_t v13;
 
-    DVRDRV.mainthread_id = -1;
     v12.attr = 0;
     v12.initial = 1;
     v12.max = 1;
@@ -201,10 +192,10 @@ int DvrdrvResetSystem()
     USE_SPD_REGS;
 
     BlockAPI();
-    SPD_REG8(0x4008) &= 0xFEu;
+    SPD_REG16(0x4008) &= 0xFEu;
     DelayThread(100000);
-    SPD_REG8(0x4008) |= 1u;
-    DVRDRV.mainthread_id = GetThreadId();
+    SPD_REG16(0x4008) |= 1u;
+    DVRDRV.arg1 = GetThreadId();
     USec2SysClock(0x1C9C380u, &v4);
     SetAlarm(&v4, (unsigned int (*)(void *))INTR_DVRRDY_TO_HANDLER, &DVRDRV);
     v0 = SleepThread();
@@ -213,9 +204,9 @@ int DvrdrvResetSystem()
     v2 = -2;
     if (!v1) {
         v2 = -1;
-        if ((DVRDRV.dvr_ready & 1) != 0)
+        if ((DVRDRV.arg2 & 1) != 0)
             v2 = 0;
-        DVRDRV.dvr_ready = 0;
+        DVRDRV.arg2 = 0;
     }
     DvrdrvDisableIntr(1);
     UnblockAPI();
@@ -350,9 +341,9 @@ int DvrdrvSetDmaDirection(u32 arg)
         while ((SPD_REG16(0x4100) & 2) != 0)
             ;
     }
-    if ((SPD_REG8(0x4004) & 7) == arg)
+    if ((SPD_REG16(0x4004) & 7) == arg)
         return 0;
-    SPD_REG8(0x4004) = arg | (SPD_REG8(0x4004) & 0xF8);
+    SPD_REG16(0x4004) = arg | (SPD_REG16(0x4004) & 0xF8);
     SPD_REG16(0x4100) |= 1u;
     while ((SPD_REG16(0x4100) & 1) != 0)
         ;
@@ -377,7 +368,7 @@ int DvrdrvTransferDma(u8 *output_buffer, int a2)
     SPD_REG16(0x4108) = a2 / 128;
     SPD_REG16(0x410C) = 32;
     v8 = (u32 *)&output_buffer[128 * (u16)(a2 / 128)];
-    switch (SPD_REG8(0x4004) & 7) {
+    switch (SPD_REG16(0x4004) & 7) {
         case 0:
         case 2:
         case 7:
@@ -398,8 +389,8 @@ int DvrdrvTransferDma(u8 *output_buffer, int a2)
             if (v7 > 0) {
                 do {
                     v7 -= 4;
-                    SPD_REG16(0x4120) = ((*((u32 *)v8)) & 0x0000FFFF);
-                    SPD_REG16(0x4122) = ((*((u32 *)v8)) & 0xFFFF0000) >> 16;
+                    SPD_REG16(4120) = ((*((u32 *)v8)) & 0x0000FFFF);
+                    SPD_REG16(4122) = ((*((u32 *)v8)) & 0xFFFF0000) >> 16;
                     v8 += 1;
                 } while (v7 > 0);
             }
@@ -633,7 +624,8 @@ int DvrdrvDisableIntr(s16 a1)
 
 int DvrdrvRegisterIntrHandler(int a1, void *arg, void (*a3)(int, void *))
 {
-    int i;
+        int v6;
+    void (**v7)(int, void *);
 
     BlockAPI();
     for (i = 0; i < 32; i += 1)
@@ -656,17 +648,19 @@ int DvrdrvUnregisterIntrHandler(void (*a1)(int, void *))
     int i;
 
     BlockAPI();
-    for (i = 0; i < 32; i += 1)
-    {
-        if (intrhandler_callbacks[i] == a1)
-        {
-            intrhandler_callbacks[i] = NULL;
-            intrhandler_intrnum[i] = 0;
-            intrhandler_callbacksarg[i] = 0;
+        v6 = 0;
+    v7 = intrhandler_callbacks;
+    do {
+        if (!*v7) {
+            *v7 = a3;
+            intrhandler_intrnum[v6] = a1;
+            intrhandler_callbacksarg[v6] = arg;
             UnblockAPI();
             return 0;
         }
-    }
+        ++v6;
+        ++v7;
+    } while (v6 < 32);
     UnblockAPI();
     return -1;
 }
